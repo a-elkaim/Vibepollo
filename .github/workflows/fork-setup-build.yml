@@ -1,0 +1,35 @@
+# Fork-only: build an unsigned VibepolloSetup.exe from this branch.
+# Not meant for upstream. Run it from the Actions tab (workflow_dispatch), or push to this branch.
+name: Fork setup build
+permissions: {}
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fork/speaker-fix-ci
+
+concurrency:
+  group: fork-setup-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows setup
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/ci-windows.yml
+    with:
+      release_commit: ${{ github.sha }}
+      release_version: 2.18.20-speakerfix5
+      build_only: false
+      build_tests: false
+      daily_unsigned: false
+      require_signpath_signing: false
+      require_truehdr_runtime: false
+      use_self_hosted: false
+      symbol_product_name: Vibepollo
+      symbol_release_prefix: polo
+      publish_symbols: false
+      release_artifact_retention_days: 14
