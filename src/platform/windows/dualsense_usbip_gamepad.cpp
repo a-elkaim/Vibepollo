@@ -43,6 +43,8 @@ namespace platf {
       }
       std::shared_ptr<controller_speaker_pcm::producer_epoch> speaker_epoch = std::make_shared<controller_speaker_pcm::producer_epoch>(0);
       dualsense_usbip_gamepad::pcm_packetizer speaker;
+      // Unsent speaker blocks kept per controller: 8 blocks of 5 ms is 40 ms
+      static constexpr std::size_t speaker_backlog_blocks = 8;
       std::uint32_t speaker_sequence = 0;
       std::uint64_t speaker_position = 0;
       std::chrono::steady_clock::time_point last_speaker {};
@@ -226,12 +228,16 @@ namespace platf {
         msg.data.speaker.flags = speaker_position == 0 ? 1 : 0;
         msg.data.speaker.samples = samples;
         speaker_position += 240;
-        // Keep at most one unsent speaker block per controller. Replacement
-        // leaves a sample-position gap, which the client treats as discontinuity.
-        // Never evict actuator or another controller's feedback.
-        feedback_queue->raise_latest(std::move(msg), [index = client_index](const gamepad_feedback_msg_t &pending) {
+        // One USB audio request carries several milliseconds of sound, so it yields
+        // several 5 ms blocks at the same instant. Keeping only the latest unsent block
+        // dropped every other one (half the speaker audio, heard as crackling), so keep
+        // a short backlog and discard the oldest block only past it, which bounds the
+        // latency after a network stall. Each drop leaves a sample-position gap, which
+        // the client treats as a discontinuity. Never evict actuator or another
+        // controller's feedback.
+        feedback_queue->push_bounded(std::move(msg), [index = client_index](const gamepad_feedback_msg_t &pending) {
           return pending.type == gamepad_feedback_e::speaker_pcm && pending.id == index;
-        });
+        }, speaker_backlog_blocks);
       });
     }
 

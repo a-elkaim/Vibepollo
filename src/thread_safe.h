@@ -390,6 +390,37 @@ namespace safe {
       return true;
     }
 
+    /// Append a value, keeping at most `limit` pending items that match: past the
+    /// limit the oldest matching item is dropped. For a stream of blocks where a
+    /// short backlog is normal (several blocks can be produced in one instant) and
+    /// only a long one is obsolete. Other producers' items are never evicted.
+    template<class Predicate>
+    bool push_bounded(T value, Predicate matches, std::size_t limit) {
+      std::lock_guard ul {_lock};
+      if (!_poll_state.running()) {
+        return false;
+      }
+      std::size_t count = 0;
+      auto oldest = _queue.end();
+      for (auto it = _queue.begin(); it != _queue.end(); ++it) {
+        if (matches(*it)) {
+          if (oldest == _queue.end()) {
+            oldest = it;
+          }
+          ++count;
+        }
+      }
+      if (count >= limit && oldest != _queue.end()) {
+        _queue.erase(oldest);
+      } else if (_queue.size() >= _max_elements) {
+        return false;
+      }
+      _queue.emplace_back(std::move(value));
+      _poll_state.set_ready(true);
+      _cv.notify_all();
+      return true;
+    }
+
     /// Coalesce obsolete snapshots at the tail (the newest value replaces every
     /// pending match and lands behind the events queued since), with three classes:
     ///   * priority values (`priority`) are never evicted and may evict an ordinary

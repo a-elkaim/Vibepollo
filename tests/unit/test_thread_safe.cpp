@@ -676,3 +676,43 @@ TEST(ThreadSafeQueueTests, StopWakesTimedConsumerAndReadinessWaiter) {
   EXPECT_FALSE(consumer.get());
   EXPECT_FALSE(waiter.get());
 }
+
+TEST(ThreadSafeQueueTests, BoundedPushKeepsABacklogAndDropsOnlyTheOldestMatch) {
+  using namespace std::chrono_literals;
+  using block_t = std::pair<int, int>;  // owner, sequence
+  safe::queue_t<block_t> queue(16);
+  const auto of_owner = [](int owner) {
+    return [owner](const block_t &pending) {
+      return pending.first == owner;
+    };
+  };
+
+  // Several blocks produced at once must all be kept, in order
+  for (int sequence = 0; sequence < 3; ++sequence) {
+    ASSERT_TRUE(queue.push_bounded(block_t {1, sequence}, of_owner(1), 3));
+  }
+  ASSERT_TRUE(queue.push_bounded(block_t {2, 100}, of_owner(2), 3));
+
+  // Past the limit, only the oldest block of the same owner goes
+  ASSERT_TRUE(queue.push_bounded(block_t {1, 3}, of_owner(1), 3));
+
+  std::vector<block_t> popped;
+  while (auto value = queue.pop(0ms)) {
+    popped.push_back(*value);
+  }
+  const std::vector<block_t> expected {{1, 1}, {1, 2}, {2, 100}, {1, 3}};
+  EXPECT_EQ(popped, expected);
+}
+
+TEST(ThreadSafeQueueTests, BoundedPushRefusesWhenFullOfOtherProducersAndWhenStopped) {
+  safe::queue_t<int> queue(2);
+  const auto never = [](int) {
+    return false;
+  };
+  ASSERT_TRUE(queue.push_bounded(1, never, 4));
+  ASSERT_TRUE(queue.push_bounded(2, never, 4));
+  EXPECT_FALSE(queue.push_bounded(3, never, 4));  // never evicts what it doesn't match
+
+  queue.stop();
+  EXPECT_FALSE(queue.push_bounded(4, never, 4));
+}
